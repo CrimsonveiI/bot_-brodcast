@@ -324,23 +324,89 @@ async def help_command(ctx):
     await ctx.send(embed=embed)
 
 
-def main():
-    if not TOKEN or TOKEN.strip() == "" or TOKEN == "YOUR_DISCORD_BOT_TOKEN_HERE":
-        print("=" * 60)
-        print("❌ خطأ: لم يتم وضع توكن البوت (DISCORD_TOKEN)!")
-        print("يرجى فتح ملف .env ووضع التوكن الخاص ببوتك.")
-        print("مثال داخل ملف .env:")
-        print("DISCORD_TOKEN=MTE5ODc2NTQzMjE...")
-        print("=" * 60)
-        return
+# -------------------------------------------------------------
+# خادم ويب خفيف لدعم الاستضافة على Render (Web Service)
+# -------------------------------------------------------------
+from aiohttp import web
 
+async def health_check(request):
+    """صفحة فحص الصحة لخوادم Render السحابية"""
+    html_content = (
+        "<!DOCTYPE html>"
+        "<html lang='ar' dir='rtl'>"
+        "<head><meta charset='utf-8'><title>Discord Bot Status</title>"
+        "<style>body{font-family:Arial,sans-serif;background:#0f172a;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;}"
+        ".card{background:#1e293b;padding:30px;border-radius:12px;text-align:center;box-shadow:0 8px 24px rgba(0,0,0,0.3);}"
+        "h1{color:#38bdf8;margin-bottom:10px;}p{color:#94a3b8;font-size:18px;}.badge{display:inline-block;background:#22c55e;color:#000;padding:6px 14px;border-radius:20px;font-weight:bold;margin-top:15px;}</style>"
+        "</head>"
+        "<body>"
+        "<div class='card'>"
+        "<h1>🤖 بوت الدسكورد يعمل بنجاح!</h1>"
+        "<p>تم تجاوز فحص الصحة لـ Render (Port Check Passed)</p>"
+        "<div class='badge'>Online 🟢</div>"
+        "</div>"
+        "</body>"
+        "</html>"
+    )
+    return web.Response(text=html_content, content_type="text/html")
+
+
+async def start_web_server(port: int):
+    """بدء خادم الويب للاستماع على المنفذ المطلوب بواسطة Render"""
+    app = web.Application()
+    app.router.add_get("/", health_check)
+    app.router.add_get("/health", health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f" [Render] خادم الويب يعمل بنجاح على المنفذ: {port} (تم تفعيل فحص الصحة)")
+
+
+async def main():
+    # 1. التحقق من وجود التوكن
+    if not TOKEN or TOKEN.strip() == "" or TOKEN == "YOUR_DISCORD_BOT_TOKEN_HERE":
+        print("=" * 65)
+        print("❌ خطأ: لم يتم وضع توكن البوت (DISCORD_TOKEN)!")
+        print("")
+        print("💡 إذا كنت ترفع البوت على Render:")
+        print("1. ادخل إلى لوحة تحكم Render: https://dashboard.render.com")
+        print("2. افتح خدمتك (Your Web Service).")
+        print("3. اضغط على القائمة الجانبية: 'Environment'.")
+        print("4. أضف متغيراً جديداً باسم:")
+        print("   Key:   DISCORD_TOKEN")
+        print("   Value: [ضع توكن بوتك الخاص هنا]")
+        print("5. اضغط 'Save Changes' وسيعمل البوت تلقائياً.")
+        print("=" * 65)
+        sys.exit(1)
+
+    # 2. تشغيل خادم الويب إذا كان البوت على Render (يحدد Render منفذ PORT تلقائياً)
+    port_env = os.environ.get("PORT")
+    if port_env:
+        try:
+            port = int(port_env)
+            await start_web_server(port)
+        except Exception as e:
+            print(f"⚠️ تحذير: فشل بدء خادم الويب على المنفذ {port_env}: {e}")
+
+    # 3. تشغيل البوت
     try:
-        bot.run(TOKEN)
+        async with bot:
+            await bot.start(TOKEN)
     except discord.errors.LoginFailure:
-        print("❌ خطأ: التوكن غير صالح! يرجى التأكد من نسخ التوكن الصحيح من Discord Developer Portal.")
+        print("=" * 65)
+        print("❌ خطأ: التوكن غير صالح (Invalid Token)!")
+        print("يرجى التأكد من نسخ التوكن الصحيح من Discord Developer Portal.")
+        print("=" * 65)
+        sys.exit(1)
     except Exception as e:
         print(f"❌ حدث خطأ أثناء تشغيل البوت: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nتم إيقاف البوت.")
+
