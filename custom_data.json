@@ -1,4 +1,8 @@
 {
   "responses": {},
-  "commands": {}
+  "commands": {},
+  "status": {
+    "type": "custom",
+    "text": "awhara"
+  }
 }

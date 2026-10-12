@@ -94,6 +94,22 @@ def owner_only():
     return commands.check(predicate)
 
 
+def make_activity(act_type: str, text: str):
+    """إنشاء كائن النشاط حسب النوع والنص"""
+    t = act_type.lower()
+    if t in ["استماع", "listening", "listen"]:
+        return discord.Activity(type=discord.ActivityType.listening, name=text)
+    elif t in ["لعب", "playing", "play"]:
+        return discord.Game(name=text)
+    elif t in ["مشاهدة", "watching", "watch"]:
+        return discord.Activity(type=discord.ActivityType.watching, name=text)
+    elif t in ["بث", "streaming", "stream"]:
+        return discord.Streaming(name=text, url="https://twitch.tv/discord")
+    else:
+        # الحالة المخصصة (Custom Status): تظهر كنص فقط دون كلمات مسبقة
+        return discord.CustomActivity(name=text)
+
+
 @bot.event
 async def on_ready():
     """الحدث الذي يعمل عند تسجيل دخول البوت بنجاح"""
@@ -120,8 +136,14 @@ async def on_ready():
     print(" 🔒 وضع الحماية: البوت مخصص لمالك البوت فقط!")
     print(" 🚀 البوت جاهز لاستقبال الأوامر!")
     print("=" * 55)
-    activity = discord.Activity(type=discord.ActivityType.listening, name="أمر _اكتب (للمالك)")
+
+    # تعيين حالة البوت إلى awhara (أو الحالة المخزنة سابقاً)
+    saved_status = bot_data.get("status", {"type": "custom", "text": "awhara"})
+    act_type = saved_status.get("type", "custom")
+    act_text = saved_status.get("text", "awhara")
+    activity = make_activity(act_type, act_text)
     await bot.change_presence(status=discord.Status.online, activity=activity)
+    print(f" 🎮 تم ضبط حالة البوت على: {act_text} ({act_type})")
 
 
 @bot.event
@@ -217,6 +239,63 @@ async def owner_command(ctx):
     await ctx.send(f"👑 مرحباً يا مالك البوت! معترف بك رسمياً: **{ctx.author.name}** (ID: `{ctx.author.id}`)")
 
 
+@bot.command(name="حالة", aliases=["تغيير_الحالة", "status"])
+@owner_only()
+async def change_status(ctx, *, args: str = None):
+    """
+    تغيير حالة البوت من الشات (خاص بالمالك فقط).
+    الاستخدام:
+    • _حالة awhara                  -> تجعل الحالة مخصصة: awhara
+    • _حالة استماع awhara          -> تجعل الحالة: يستمع إلى awhara
+    • _حالة لعب awhara             -> تجعل الحالة: يلعب awhara
+    • _حالة مشاهدة awhara          -> تجعل الحالة: يشاهد awhara
+    """
+    if not args or not args.strip():
+        curr = bot_data.get("status", {"type": "custom", "text": "awhara"})
+        await ctx.send(
+            f"ℹ️ الحالة الحالية للبوت: **{curr.get('text')}** (`{curr.get('type')}`)\n\n"
+            "لتغيير الحالة يمكنك استخدام:\n"
+            "• `_حالة awhara` (حالة مخصصة)\n"
+            "• `_حالة استماع awhara` (Listening)\n"
+            "• `_حالة لعب awhara` (Playing)\n"
+            "• `_حالة مشاهدة awhara` (Watching)"
+        )
+        return
+
+    parts = args.strip().split(maxsplit=1)
+    first_word = parts[0].lower()
+    known_types = {
+        "استماع": "listening", "listening": "listening",
+        "لعب": "playing", "playing": "playing",
+        "مشاهدة": "watching", "watching": "watching",
+        "بث": "streaming", "streaming": "streaming",
+        "مخصص": "custom", "custom": "custom"
+    }
+
+    if first_word in known_types and len(parts) > 1:
+        act_type = known_types[first_word]
+        act_text = parts[1].strip()
+    else:
+        act_type = "custom"
+        act_text = args.strip()
+
+    activity = make_activity(act_type, act_text)
+    await bot.change_presence(status=discord.Status.online, activity=activity)
+
+    bot_data["status"] = {"type": act_type, "text": act_text}
+    save_data(bot_data)
+
+    type_arabic = {
+        "custom": "حالة مخصصة",
+        "listening": "يستمع إلى",
+        "playing": "يلعب",
+        "watching": "يشاهد",
+        "streaming": "بث مباشر"
+    }.get(act_type, act_type)
+
+    await ctx.send(f"✅ تم تغيير حالة البوت بنجاح إلى: **{act_text}** ({type_arabic})")
+
+
 @bot.command(name="اضف_رد", aliases=["تعلم", "add_response"])
 @owner_only()
 async def add_response(ctx, *, args: str = None):
@@ -290,7 +369,7 @@ async def add_command(ctx, cmd_name: str = None, *, response: str = None):
         return
 
     cmd_name = cmd_name.strip().lstrip("_").lower()
-    built_in = ["اكتب", "قول", "say", "echo", "المالك", "اضف_رد", "حذف_رد", "الردود", "اضف_امر", "حذف_امر", "الاوامر_المخصصة", "مساعدة", "اوامر"]
+    built_in = ["اكتب", "قول", "say", "echo", "المالك", "حالة", "تغيير_الحالة", "status", "اضف_رد", "حذف_رد", "الردود", "اضف_امر", "حذف_امر", "الاوامر_المخصصة", "مساعدة", "اوامر"]
     if cmd_name in built_in:
         await ctx.send("⚠️ لا يمكنك استبدال هذا الأمر لأنه أمر نظام أساسي.")
         return
@@ -346,6 +425,9 @@ async def help_command(ctx):
         "🤖 **دليل أوامر البوت (خاص بالمالك):**\n\n"
         "👑 **التحقق من المالك:**\n"
         "• `_المالك`: للتأكد من أن البوت معترف بحسابك كمالك رسمي.\n\n"
+        "🎮 **تغيير حالة البوت:**\n"
+        "• `_حالة <النص>`: تعيين حالة مخصصة للبوت (مثال: `_حالة awhara`).\n"
+        "• خيارات أخرى: `_حالة استماع <النص>` أو `_حالة لعب <النص>` أو `_حالة مشاهدة <النص>`.\n\n"
         "📝 **أمر الكتابة الأساسي:**\n"
         "• `_اكتب <النص>`: يكتب البوت النص المحدد ويحذف رسالتك فوراً ليبدو كأنه هو المتحدث.\n"
         "*(يمكنك أيضاً استخدام: `_قول` أو `_say`)*\n\n"
