@@ -14,13 +14,14 @@ if sys.platform.startswith("win"):
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
+from aiohttp import web
 
 # تحميل متغيرات البيئة من ملف .env
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 # تحديد النوايا (Intents)
-# يجب تفعيل Message Content Intent من بوابة المطورين (Discord Developer Portal)
+# ⚠️ تنبيه هام: يجب تفعيل خيار Message Content Intent من Discord Developer Portal
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
@@ -57,113 +58,170 @@ def save_data(data):
 bot_data = load_data()
 
 
+# آيدي مالك البوت الأساسي
+DEFAULT_OWNER_ID = 768955375537750090
+
+
+def check_is_owner(user_id: int) -> bool:
+    """التحقق مما إذا كان المستخدم هو مالك البوت"""
+    # 1. مطابقة آيدي المالك الثابت
+    if user_id == DEFAULT_OWNER_ID:
+        return True
+
+    # 2. التحقق من الآيدي المحدد يدوياً في ملف .env
+    env_owner = os.getenv("OWNER_ID")
+    if env_owner and env_owner.strip():
+        try:
+            if user_id == int(env_owner.strip()):
+                return True
+        except ValueError:
+            pass
+
+    # 3. التحقق من مالك التطبيق التلقائي من دسكورد
+    if getattr(bot, "owner_id", None) and user_id == bot.owner_id:
+        return True
+
+    if getattr(bot, "owner_ids", None) and user_id in bot.owner_ids:
+        return True
+
+    return False
+
+
+def owner_only():
+    """شرط للأوامر: السماح لمالك البوت فقط بتنفيذ الأمر"""
+    async def predicate(ctx):
+        return check_is_owner(ctx.author.id)
+    return commands.check(predicate)
+
+
 @bot.event
 async def on_ready():
     """الحدث الذي يعمل عند تسجيل دخول البوت بنجاح"""
-    print("=" * 50)
-    print(f" تم تسجيل الدخول بنجاح كـ: {bot.user.name} ({bot.user.id})")
-    print(f" البادئة المستخدمة: _")
-    print(" البوت جاهز لاستقبال الأوامر!")
-    print("=" * 50)
-    # تعيين نشاط للبوت
-    activity = discord.Activity(type=discord.ActivityType.listening, name="أمر _اكتب | _مساعدة")
+    # جلب معلومات المالك تلقائياً من تطبيق دسكورد
+    try:
+        app_info = await bot.application_info()
+        if app_info.team:
+            bot.owner_ids = {m.id for m in app_info.team.members}
+            print(f" 👑 تم التعرف على مالكي البوت (فريق): {bot.owner_ids}")
+        else:
+            bot.owner_id = app_info.owner.id
+            print(f" 👑 تم التعرف على مالك البوت تلقائياً: {app_info.owner.name} (ID: {app_info.owner.id})")
+    except Exception as e:
+        print(f" ⚠️ تعذر جلب معلومات المالك تلقائياً: {e}")
+
+    manual_owner = os.getenv("OWNER_ID")
+    if manual_owner and manual_owner.strip():
+        print(f" 📌 تم تفعيل مالك يدوي من .env: {manual_owner.strip()}")
+
+    print("=" * 55)
+    print(f" ✅ تم تسجيل الدخول بنجاح كـ: {bot.user.name} ({bot.user.id})")
+    print(f" 📌 البادئة المستخدمة: _")
+    print(f" 👑 آيدي المالك المعتمد: {DEFAULT_OWNER_ID}")
+    print(" 🔒 وضع الحماية: البوت مخصص لمالك البوت فقط!")
+    print(" 🚀 البوت جاهز لاستقبال الأوامر!")
+    print("=" * 55)
+    activity = discord.Activity(type=discord.ActivityType.listening, name="أمر _اكتب (للمالك)")
     await bot.change_presence(status=discord.Status.online, activity=activity)
 
 
 @bot.event
 async def on_message(message):
-    """الاستماع لجميع الرسائل للردود التلقائية والأوامر"""
-    # تجاهل رسائل البوتات نفسها
+    """معالجة جميع الرسائل الواردة"""
+    # تجاهل رسائل البوتات
     if message.author.bot:
         return
 
-    # 1. فحص الردود التلقائية المبرمجة
-    content_lower = message.content.strip().lower()
+    content = message.content.strip()
+
+    # ---------------------------------------------------------
+    # 1. أمر _اكتب الأساسي (يكتب النص ويحذف رسالة المستخدم فوراً)
+    # ---------------------------------------------------------
+    write_triggers = ["_اكتب", "_قول", "_say", "_echo"]
+    matched_trigger = None
+    for trg in write_triggers:
+        if content.lower().startswith(trg):
+            # التأكد من أنه الأمر نفسه وليس جزءاً من كلمة أخرى
+            rest = content[len(trg):]
+            if rest == "" or rest.startswith(" ") or rest.startswith("\n"):
+                matched_trigger = trg
+                break
+
+    if matched_trigger:
+        # حصر أمر _اكتب على مالك البوت فقط (تجاهل تام لأي شخص آخر)
+        if not check_is_owner(message.author.id):
+            return
+
+        text = content[len(matched_trigger):].strip()
+
+        # 1. محاولة حذف رسالة المرسل فوراً
+        try:
+            await message.delete()
+        except discord.Forbidden:
+            print("⚠️ تنبيه: البوت لا يمتلك صلاحية Manage Messages في هذه القناة لحذف رسالة المستخدم.")
+        except Exception:
+            pass
+
+        # 2. إذا لم يكتب المستخدم نصاً بعد الأمر
+        if not text:
+            try:
+                temp = await message.channel.send(
+                    f"❌ **يرجى كتابة النص بعد الأمر!**\nمثال: `{matched_trigger} مرحباً بكم جميعاً!`"
+                )
+                await asyncio.sleep(4)
+                await temp.delete()
+            except Exception:
+                pass
+            return
+
+        # 3. إرسال النص
+        try:
+            await message.channel.send(text)
+        except Exception as e:
+            print(f"❌ خطأ أثناء إرسال الرسالة: {e}")
+        return
+
+    # ---------------------------------------------------------
+    # 2. فحص الردود التلقائية المبرمجة
+    # ---------------------------------------------------------
+    content_lower = content.lower()
     responses = bot_data.get("responses", {})
     if content_lower in responses:
         await message.channel.send(responses[content_lower])
+        return
 
-    # 2. فحص الأوامر المخصصة المبرمجة مع البادئة "_"
-    if message.content.startswith("_"):
-        parts = message.content[1:].strip().split(maxsplit=1)
+    # ---------------------------------------------------------
+    # 3. فحص الأوامر المخصصة المبرمجة مع البادئة "_"
+    # ---------------------------------------------------------
+    if content.startswith("_"):
+        parts = content[1:].strip().split(maxsplit=1)
         if parts:
             cmd_name = parts[0].lower()
             custom_cmds = bot_data.get("commands", {})
             if cmd_name in custom_cmds:
                 await message.channel.send(custom_cmds[cmd_name])
+                return
 
-    # 3. معالجة الأوامر القياسية للبوت
+    # ---------------------------------------------------------
+    # 4. معالجة باقي أوامر البوت القياسية
+    # ---------------------------------------------------------
     await bot.process_commands(message)
 
 
 # -------------------------------------------------------------
-# الأمر الأساسي: _اكتب (يكتب النص ويحذف رسالة المستخدم فوراً)
+# أوامر برمجة وإدارة البوت (مخصصة لمالك البوت فقط)
 # -------------------------------------------------------------
-@bot.command(name="اكتب", aliases=["قول", "say", "echo"])
-async def write_command(ctx, *, text: str = None):
-    """
-    أمر _اكتب: يرسل النص المحمول ثم يحذف رسالة المستخدم.
-    الاستخدام: _اكتب <النص المراد كتابته>
-    """
-    # 1. محاولة حذف رسالة المستخدم
-    try:
-        await ctx.message.delete()
-    except discord.Forbidden:
-        # إذا لم يكن لدى البوت صلاحية Manage Messages
-        warning = await ctx.send(
-            "⚠️ **تنبيه:** البوت لا يمتلك صلاحية `Manage Messages` (إدارة الرسائل) في هذه القناة لحذف رسالتك الأصلية.\n"
-            "يرجى إعطاء البوت رتبة تمتلك صلاحية إدارة الرسائل.",
-            delete_after=7
-        )
-    except discord.HTTPException:
-        pass
-
-    # 2. التحقق من وجود نص
-    if not text or not text.strip():
-        temp_msg = await ctx.send("❌ **يرجى إدخال النص بعد الأمر!**\nمثال: `_اكتب مرحباً بكم جميعاً!`")
-        await asyncio.sleep(5)
-        try:
-            await temp_msg.delete()
-        except Exception:
-            pass
-        return
-
-    # 3. إرسال النص كما هو
-    await ctx.send(text)
+@bot.command(name="المالك", aliases=["owner"])
+@owner_only()
+async def owner_command(ctx):
+    """التحقق من هوية مالك البوت المعترف به"""
+    await ctx.send(f"👑 مرحباً يا مالك البوت! معترف بك رسمياً: **{ctx.author.name}** (ID: `{ctx.author.id}`)")
 
 
-# -------------------------------------------------------------
-# أمر إضافي: _اكتب_امبد (يكتب النص داخل بطاقة Embed أنيقة ويحذف رسالة المستخدم)
-# -------------------------------------------------------------
-@bot.command(name="اكتب_امبد", aliases=["قول_امبد", "embed"])
-async def write_embed_command(ctx, *, text: str = None):
-    """
-    أمر _اكتب_امبد: يرسل النص داخل بطاقة Embed ملونة ويحذف رسالتك الأصلية.
-    الاستخدام: _اكتب_امبد <النص>
-    """
-    try:
-        await ctx.message.delete()
-    except Exception:
-        pass
-
-    if not text or not text.strip():
-        temp = await ctx.send("❌ يرجى إدخال نص بعد الأمر: `_اكتب_امبد مرحباً`", delete_after=5)
-        return
-
-    embed = discord.Embed(
-        description=text,
-        color=discord.Color.blue()
-    )
-    await ctx.send(embed=embed)
-
-
-# -------------------------------------------------------------
-# أوامر برمجة البوت من الشات (إضافة ردود وأوامر مخصصة)
-# -------------------------------------------------------------
 @bot.command(name="اضف_رد", aliases=["تعلم", "add_response"])
+@owner_only()
 async def add_response(ctx, *, args: str = None):
     """
-    برمجة رد تلقائي للبوت من الشات.
+    برمجة رد تلقائي للبوت من الشات (للمالك فقط).
     الاستخدام: _اضف_رد الكلمة = الرد
     مثال: _اضف_رد السلام عليكم = وعليكم السلام ورحمة الله وبركاته!
     """
@@ -185,9 +243,10 @@ async def add_response(ctx, *, args: str = None):
 
 
 @bot.command(name="حذف_رد", aliases=["delete_response"])
+@owner_only()
 async def delete_response(ctx, *, trigger: str = None):
     """
-    حذف رد تلقائي مبرمج.
+    حذف رد تلقائي مبرمج (للمالك فقط).
     الاستخدام: _حذف_رد الكلمة
     """
     if not trigger:
@@ -205,27 +264,24 @@ async def delete_response(ctx, *, trigger: str = None):
 
 
 @bot.command(name="الردود", aliases=["قائمة_الردود", "list_responses"])
+@owner_only()
 async def list_responses(ctx):
-    """عرض جميع الردود التلقائية المبرمجة حالياً"""
+    """عرض جميع الردود التلقائية المبرمجة حالياً (للمالك فقط)"""
     responses = bot_data.get("responses", {})
     if not responses:
-        await ctx.send("ℹ️ لا توجد ردود تلقائية مبرمجة حالياً. يمكنك إضافة رد عبر: `_اضف_رد الكلمة = الرد`")
+        await ctx.send("ℹ️ لا توجد ردود تلقائية مبرمجة حالياً.\nيمكنك إضافة رد عبر: `_اضف_رد الكلمة = الرد`")
         return
 
-    lines = [f"• `{trig}` ⬅️ `{resp}`" for trig, resp in responses.items()]
-    text = "\n".join(lines)
-    embed = discord.Embed(
-        title="📋 الردود التلقائية المبرمجة",
-        description=text[:4000],
-        color=discord.Color.green()
-    )
-    await ctx.send(embed=embed)
+    lines = [f"• `{trig}` ⬅️ {resp}" for trig, resp in responses.items()]
+    text = "📋 **قائمة الردود التلقائية المبرمجة:**\n" + "\n".join(lines)
+    await ctx.send(text[:2000])
 
 
 @bot.command(name="اضف_امر", aliases=["add_command"])
+@owner_only()
 async def add_command(ctx, cmd_name: str = None, *, response: str = None):
     """
-    برمجة أمر جديد خاص بالبادئة _ من خلال الشات.
+    برمجة أمر جديد خاص بالبادئة _ من خلال الشات (للمالك فقط).
     الاستخدام: _اضف_امر اسم_الامر الرد
     مثال: _اضف_امر قوانين الرجاء احترام الجميع وعدم السب!
     """
@@ -234,8 +290,7 @@ async def add_command(ctx, cmd_name: str = None, *, response: str = None):
         return
 
     cmd_name = cmd_name.strip().lstrip("_").lower()
-    # التحقق من عدم التعارض مع الأوامر الأساسية
-    built_in = ["اكتب", "اكتب_امبد", "اضف_رد", "حذف_رد", "الردود", "اضف_امر", "حذف_امر", "الاوامر_المخصصة", "مساعدة", "اوامر"]
+    built_in = ["اكتب", "قول", "say", "echo", "المالك", "اضف_رد", "حذف_رد", "الردود", "اضف_امر", "حذف_امر", "الاوامر_المخصصة", "مساعدة", "اوامر"]
     if cmd_name in built_in:
         await ctx.send("⚠️ لا يمكنك استبدال هذا الأمر لأنه أمر نظام أساسي.")
         return
@@ -246,9 +301,10 @@ async def add_command(ctx, cmd_name: str = None, *, response: str = None):
 
 
 @bot.command(name="حذف_امر", aliases=["delete_command"])
+@owner_only()
 async def delete_command(ctx, cmd_name: str = None):
     """
-    حذف أمر مخصص تم برمجته.
+    حذف أمر مخصص تم برمجته (للمالك فقط).
     الاستخدام: _حذف_امر اسم_الامر
     """
     if not cmd_name:
@@ -266,89 +322,61 @@ async def delete_command(ctx, cmd_name: str = None):
 
 
 @bot.command(name="الاوامر_المخصصة", aliases=["custom_commands"])
+@owner_only()
 async def list_custom_commands(ctx):
-    """عرض قائمة الأوامر المخصصة التي تم برمجتها"""
+    """عرض قائمة الأوامر المخصصة المبرمجة (للمالك فقط)"""
     custom_cmds = bot_data.get("commands", {})
     if not custom_cmds:
-        await ctx.send("ℹ️ لا توجد أوامر مخصصة مسجلة حالياً. يمكنك إنشاء أمر جديد عبر: `_اضف_امر <اسم> <الرد>`")
+        await ctx.send("ℹ️ لا توجد أوامر مخصصة مسجلة حالياً.\nيمكنك إنشاء أمر جديد عبر: `_اضف_امر <اسم> <الرد>`")
         return
 
-    lines = [f"• `_{cmd}` ⬅️ `{resp}`" for cmd, resp in custom_cmds.items()]
-    text = "\n".join(lines)
-    embed = discord.Embed(
-        title="⚡ الأوامر المخصصة المبرمجة",
-        description=text[:4000],
-        color=discord.Color.purple()
-    )
-    await ctx.send(embed=embed)
+    lines = [f"• `_{cmd}` ⬅️ {resp}" for cmd, resp in custom_cmds.items()]
+    text = "⚡ **قائمة الأوامر المخصصة المبرمجة:**\n" + "\n".join(lines)
+    await ctx.send(text[:2000])
 
 
 # -------------------------------------------------------------
-# قائمة المساعدة
+# قائمة المساعدة (للمالك فقط)
 # -------------------------------------------------------------
 @bot.command(name="مساعدة", aliases=["اوامر", "help"])
+@owner_only()
 async def help_command(ctx):
     """عرض قائمة بجميع الأوامر وطريقة استخدامها"""
-    embed = discord.Embed(
-        title="🤖 دليل أوامر البوت",
-        description="هنا تجد جميع الأوامر المتاحة في البوت وكيفية استخدامها:",
-        color=discord.Color.gold()
+    help_text = (
+        "🤖 **دليل أوامر البوت (خاص بالمالك):**\n\n"
+        "👑 **التحقق من المالك:**\n"
+        "• `_المالك`: للتأكد من أن البوت معترف بحسابك كمالك رسمي.\n\n"
+        "📝 **أمر الكتابة الأساسي:**\n"
+        "• `_اكتب <النص>`: يكتب البوت النص المحدد ويحذف رسالتك فوراً ليبدو كأنه هو المتحدث.\n"
+        "*(يمكنك أيضاً استخدام: `_قول` أو `_say`)*\n\n"
+        "🛠️ **برمجة الردود التلقائية من الشات:**\n"
+        "• `_اضف_رد <الكلمة> = <الرد>`: جعل البوت يرد تلقائياً عند كتابة كلمة معينة في الشات.\n"
+        "• `_حذف_رد <الكلمة>`: حذف الرد التلقائي المحدد.\n"
+        "• `_الردود`: استعراض قائمة الردود المبرمجة.\n\n"
+        "⚡ **برمجة أوامر مخصصة من الشات:**\n"
+        "• `_اضف_امر <اسم_الأمر> <الرد>`: إنشاء أمر جديد يبدأ بـ `_`.\n"
+        "• `_حذف_امر <اسم_الأمر>`: حذف أمر مخصص.\n"
+        "• `_الاوامر_المخصصة`: استعراض الأوامر المخصصة المبرمجة.\n\n"
+        "📌 *البوت محمي ومخصص لمالك البوت فقط، ولن يستجيب لأي عضو آخر.*"
     )
-    embed.add_field(
-        name="📝 أمر الكتابة الأساسي",
-        value=(
-            "• `_اكتب <النص>`: يكتب البوت النص المدخل ويحذف رسالتك فوراً.\n"
-            "• `_اكتب_امبد <النص>`: يكتب النص داخل بطاقة ملونة ويحذف رسالتك."
-        ),
-        inline=False
-    )
-    embed.add_field(
-        name="🛠️ برمجة الردود التلقائية من الشات",
-        value=(
-            "• `_اضف_رد <الكلمة> = <الرد>`: جعل البوت يرد تلقائياً عند كتابة كلمة معينة.\n"
-            "• `_حذف_رد <الكلمة>`: حذف الرد التلقائي المحدد.\n"
-            "• `_الردود`: عرض جميع الردود التلقائية المبرمجة."
-        ),
-        inline=False
-    )
-    embed.add_field(
-        name="⚡ برمجة أوامر مخصصة من الشات",
-        value=(
-            "• `_اضف_امر <اسم_الأمر> <الرد>`: إنشاء أمر جديد يبدأ بـ `_`.\n"
-            "• `_حذف_امر <اسم_الأمر>`: حذف أمر مخصص.\n"
-            "• `_الاوامر_المخصصة`: عرض قائمة الأوامر المخصصة."
-        ),
-        inline=False
-    )
-    embed.set_footer(text="بادئة البوت هي _")
-    await ctx.send(embed=embed)
+    await ctx.send(help_text)
+
+
+@bot.event
+async def on_command_error(ctx, error):
+    """معالجة الأخطاء وطباعتها للتصحيح"""
+    # تجاهل بصمت إذا كان الأمر غير موجود أو إذا حاول عضو غير المالك استخدام الأمر
+    if isinstance(error, (commands.CommandNotFound, commands.CheckFailure)):
+        return
+    print(f"⚠️ خطأ أثناء تنفيذ الأمر: {error}")
 
 
 # -------------------------------------------------------------
 # خادم ويب خفيف لدعم الاستضافة على Render (Web Service)
 # -------------------------------------------------------------
-from aiohttp import web
-
 async def health_check(request):
-    """صفحة فحص الصحة لخوادم Render السحابية"""
-    html_content = (
-        "<!DOCTYPE html>"
-        "<html lang='ar' dir='rtl'>"
-        "<head><meta charset='utf-8'><title>Discord Bot Status</title>"
-        "<style>body{font-family:Arial,sans-serif;background:#0f172a;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;}"
-        ".card{background:#1e293b;padding:30px;border-radius:12px;text-align:center;box-shadow:0 8px 24px rgba(0,0,0,0.3);}"
-        "h1{color:#38bdf8;margin-bottom:10px;}p{color:#94a3b8;font-size:18px;}.badge{display:inline-block;background:#22c55e;color:#000;padding:6px 14px;border-radius:20px;font-weight:bold;margin-top:15px;}</style>"
-        "</head>"
-        "<body>"
-        "<div class='card'>"
-        "<h1>🤖 بوت الدسكورد يعمل بنجاح!</h1>"
-        "<p>تم تجاوز فحص الصحة لـ Render (Port Check Passed)</p>"
-        "<div class='badge'>Online 🟢</div>"
-        "</div>"
-        "</body>"
-        "</html>"
-    )
-    return web.Response(text=html_content, content_type="text/html")
+    """فحص الصحة لخوادم Render السحابية (نص عادي)"""
+    return web.Response(text="Discord Bot is Online! 🚀", content_type="text/plain")
 
 
 async def start_web_server(port: int):
@@ -360,7 +388,7 @@ async def start_web_server(port: int):
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    print(f" [Render] خادم الويب يعمل بنجاح على المنفذ: {port} (تم تفعيل فحص الصحة)")
+    print(f" 🌐 [Render] خادم الويب يعمل بنجاح على المنفذ: {port}")
 
 
 async def main():
@@ -368,26 +396,18 @@ async def main():
     if not TOKEN or TOKEN.strip() == "" or TOKEN == "YOUR_DISCORD_BOT_TOKEN_HERE":
         print("=" * 65)
         print("❌ خطأ: لم يتم وضع توكن البوت (DISCORD_TOKEN)!")
-        print("")
-        print("💡 إذا كنت ترفع البوت على Render:")
-        print("1. ادخل إلى لوحة تحكم Render: https://dashboard.render.com")
-        print("2. افتح خدمتك (Your Web Service).")
-        print("3. اضغط على القائمة الجانبية: 'Environment'.")
-        print("4. أضف متغيراً جديداً باسم:")
-        print("   Key:   DISCORD_TOKEN")
-        print("   Value: [ضع توكن بوتك الخاص هنا]")
-        print("5. اضغط 'Save Changes' وسيعمل البوت تلقائياً.")
+        print("يرجى وضع التوكن في ملف .env أو في إعدادات البيئة على Render.")
         print("=" * 65)
         sys.exit(1)
 
-    # 2. تشغيل خادم الويب إذا كان البوت على Render (يحدد Render منفذ PORT تلقائياً)
+    # 2. تشغيل خادم الويب إذا كان البوت على Render
     port_env = os.environ.get("PORT")
     if port_env:
         try:
             port = int(port_env)
             await start_web_server(port)
         except Exception as e:
-            print(f"⚠️ تحذير: فشل بدء خادم الويب على المنفذ {port_env}: {e}")
+            print(f"⚠️ تحذير: فشل بدء خادم الويب: {e}")
 
     # 3. تشغيل البوت
     try:
@@ -408,5 +428,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nتم إيقاف البوت.")
-
+        print("\nتم إيقاف البوت يدوياً.")
