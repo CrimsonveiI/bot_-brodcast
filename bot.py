@@ -12,6 +12,7 @@ if sys.platform.startswith("win"):
         pass
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 from aiohttp import web
@@ -94,6 +95,37 @@ def owner_only():
     return commands.check(predicate)
 
 
+# -------------------------------------------------------------
+# ألوان عصرية وحديثة لرسائل الإمبد (دسكورد الحديث)
+# -------------------------------------------------------------
+MODERN_COLORS = {
+    "ازرق": 0x5865F2, "blue": 0x5865F2, "بلوربل": 0x5865F2,
+    "احمر": 0xED4245, "red": 0xED4245, "قرمزي": 0x992D22,
+    "اخضر": 0x57F287, "green": 0x57F287, "نيون": 0x2ECC71,
+    "اصفر": 0xFEE75C, "yellow": 0xFEE75C,
+    "ذهبي": 0xD4AF37, "gold": 0xD4AF37, "ملكي": 0xD4AF37,
+    "بنفسجي": 0x9B59B6, "purple": 0x9B59B6,
+    "سماوي": 0x00D2D3, "cyan": 0x00D2D3,
+    "وردي": 0xEB459E, "pink": 0xEB459E,
+    "برتقالي": 0xE67E22, "orange": 0xE67E22,
+    "اسود": 0x2B2D31, "black": 0x2B2D31, "داكن": 0x1E1F22,
+    "ابيض": 0xF2F3F5, "white": 0xF2F3F5,
+}
+
+
+def resolve_color(value: str) -> int:
+    """تحديد لون الإمبد من الاسم أو كود Hex"""
+    if not value:
+        return 0x5865F2
+    clean = str(value).strip().lower().lstrip("#")
+    if clean in MODERN_COLORS:
+        return MODERN_COLORS[clean]
+    try:
+        return int(clean, 16)
+    except ValueError:
+        return 0x5865F2
+
+
 def make_activity(act_type: str, text: str):
     """إنشاء كائن النشاط حسب النوع والنص"""
     t = act_type.lower()
@@ -136,6 +168,13 @@ async def on_ready():
     print(" 🔒 وضع الحماية: البوت مخصص لمالك البوت فقط!")
     print(" 🚀 البوت جاهز لاستقبال الأوامر!")
     print("=" * 55)
+
+    # مزامنة أوامر السلاش الحديثة (/embed)
+    try:
+        synced = await bot.tree.sync()
+        print(f" ⚡ تم مزامنة {len(synced)} أمر سلاش مع دسكورد بنجاح!")
+    except Exception as e:
+        print(f" ⚠️ تعذر مزامنة أوامر السلاش: {e}")
 
     # تعيين حالة البوت إلى awhara (أو الحالة المخزنة سابقاً)
     saved_status = bot_data.get("status", {"type": "custom", "text": "awhara"})
@@ -369,7 +408,7 @@ async def add_command(ctx, cmd_name: str = None, *, response: str = None):
         return
 
     cmd_name = cmd_name.strip().lstrip("_").lower()
-    built_in = ["اكتب", "قول", "say", "echo", "المالك", "حالة", "تغيير_الحالة", "status", "اضف_رد", "حذف_رد", "الردود", "اضف_امر", "حذف_امر", "الاوامر_المخصصة", "مساعدة", "اوامر"]
+    built_in = ["اكتب", "قول", "say", "echo", "امبد", "المالك", "حالة", "تغيير_الحالة", "status", "اضف_رد", "حذف_رد", "الردود", "اضف_امر", "حذف_امر", "الاوامر_المخصصة", "مساعدة", "اوامر"]
     if cmd_name in built_in:
         await ctx.send("⚠️ لا يمكنك استبدال هذا الأمر لأنه أمر نظام أساسي.")
         return
@@ -431,6 +470,11 @@ async def help_command(ctx):
         "📝 **أمر الكتابة الأساسي:**\n"
         "• `_اكتب <النص>`: يكتب البوت النص المحدد ويحذف رسالتك فوراً ليبدو كأنه هو المتحدث.\n"
         "*(يمكنك أيضاً استخدام: `_قول` أو `_say`)*\n\n"
+        "🎨 **بطاقات الإيمبد الحديثة:**\n"
+        "• `_امبد <النص>`: إرسال النص داخل بطاقة Embed أنيقة.\n"
+        "• `_امبد --title <العنوان> --color <اللون> <النص>`: بطاقة بعنوان ولون مخصصين.\n"
+        "• `/embed`: أمر السلاش الحديث لنفس الغرض (عنوان + نص + لون + تذييل).\n"
+        "**الألوان:** ازرق، احمر، اخضر، اصفر، ذهبي، بنفسجي، سماوي، وردي، برتقالي، اسود، ابيض أو كود hex.\n\n"
         "🛠️ **برمجة الردود التلقائية من الشات:**\n"
         "• `_اضف_رد <الكلمة> = <الرد>`: جعل البوت يرد تلقائياً عند كتابة كلمة معينة في الشات.\n"
         "• `_حذف_رد <الكلمة>`: حذف الرد التلقائي المحدد.\n"
