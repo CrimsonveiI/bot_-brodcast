@@ -89,19 +89,13 @@ def check_is_owner(user_id: int) -> bool:
 
 
 def can_write(message) -> bool:
-    """السماح بأمر الكتابة للمالك أو مالك السيرفر أو من يملك صلاحية إدارة الرسائل"""
+    """السماح بأمر الكتابة لمالك البوت أو مالك السيرفر فقط"""
     if check_is_owner(message.author.id):
         return True
     guild = getattr(message, "guild", None)
     if guild is not None:
         try:
             if guild.owner_id == message.author.id:
-                return True
-        except Exception:
-            pass
-        try:
-            perms = message.channel.permissions_for(message.author)
-            if perms.administrator or perms.manage_messages:
                 return True
         except Exception:
             pass
