@@ -88,6 +88,26 @@ def check_is_owner(user_id: int) -> bool:
     return False
 
 
+def can_write(message) -> bool:
+    """السماح بأمر الكتابة للمالك أو مالك السيرفر أو من يملك صلاحية إدارة الرسائل"""
+    if check_is_owner(message.author.id):
+        return True
+    guild = getattr(message, "guild", None)
+    if guild is not None:
+        try:
+            if guild.owner_id == message.author.id:
+                return True
+        except Exception:
+            pass
+        try:
+            perms = message.channel.permissions_for(message.author)
+            if perms.administrator or perms.manage_messages:
+                return True
+        except Exception:
+            pass
+    return False
+
+
 def owner_only():
     """شرط للأوامر: السماح لمالك البوت فقط بتنفيذ الأمر"""
     async def predicate(ctx):
@@ -197,19 +217,18 @@ async def on_message(message):
     # ---------------------------------------------------------
     # 1. أمر _اكتب الأساسي (يكتب النص ويحذف رسالة المستخدم فوراً)
     # ---------------------------------------------------------
+    # قائمة المشغلات للكتابة (تقبل أي نص بعد الأمر، مع أو بدون مسافة)
     write_triggers = ["_اكتب", "_قول", "_say", "_echo"]
     matched_trigger = None
     for trg in write_triggers:
         if content.lower().startswith(trg):
-            # التأكد من أنه الأمر نفسه وليس جزءاً من كلمة أخرى
-            rest = content[len(trg):]
-            if rest == "" or rest.startswith(" ") or rest.startswith("\n"):
-                matched_trigger = trg
-                break
+            # استخراج النص المتبقي بعد اسم الأمر مباشرةً
+            matched_trigger = trg
+            break
 
     if matched_trigger:
         # حصر أمر _اكتب على مالك البوت فقط (تجاهل تام لأي شخص آخر)
-        if not check_is_owner(message.author.id):
+        if not can_write(message):
             return
 
         text = content[len(matched_trigger):].strip()
