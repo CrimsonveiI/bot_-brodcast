@@ -60,13 +60,13 @@ bot_data = load_data()
 
 
 # آيدي مالك البوت الأساسي
-DEFAULT_OWNER_ID = 768955375537750090
+DEFAULT_OWNER_IDS = {768955375537750090, 820669891571875901}
 
 
 def check_is_owner(user_id: int) -> bool:
     """التحقق مما إذا كان المستخدم هو مالك البوت"""
     # 1. مطابقة آيدي المالك الثابت
-    if user_id == DEFAULT_OWNER_ID:
+    if user_id in DEFAULT_OWNER_IDS:
         return True
 
     # 2. التحقق من الآيدي المحدد يدوياً في ملف .env
@@ -178,7 +178,7 @@ async def on_ready():
     print("=" * 55)
     print(f" ✅ تم تسجيل الدخول بنجاح كـ: {bot.user.name} ({bot.user.id})")
     print(f" 📌 البادئة المستخدمة: _")
-    print(f" 👑 آيدي المالك المعتمد: {DEFAULT_OWNER_ID}")
+    print(f" 👑 آيدي المالك المعتمد: {DEFAULT_OWNER_IDS}")
     print(" 🔒 وضع الحماية: البوت مخصص لمالك البوت فقط!")
     print(" 🚀 البوت جاهز لاستقبال الأوامر!")
     print("=" * 55)
